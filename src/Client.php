@@ -47,7 +47,7 @@ class Client
         $this->scope->setTags($this->config->initialTags);
         $this->session = [
             'id' => self::uuid(),
-            'startedAt' => gmdate('Y-m-d\TH:i:s.v\Z'),
+            'startedAt' => Breadcrumb::now(),
         ];
     }
 
@@ -116,6 +116,19 @@ class Client
         $this->breadcrumbs = [];
     }
 
+    /**
+     * Reset per-unit-of-work state (scope + breadcrumbs, re-applying the
+     * configured initial tags). Long-running hosts - queue workers, Octane -
+     * call this between jobs/requests so user identity, contexts, and
+     * breadcrumb trails never leak from one unit into the next.
+     */
+    public function reset(): void
+    {
+        $this->scope->clear();
+        $this->scope->setTags($this->config->initialTags);
+        $this->breadcrumbs = [];
+    }
+
     // --- Scope passthroughs ---------------------------------------------------
 
     /** @param array<string, mixed>|null $user */
@@ -166,6 +179,13 @@ class Client
     /**
      * @param array<string, mixed> $extra
      */
+    private const MAX_MESSAGE_CHARS = 8192;
+
+    private const MAX_STACK_CHARS = 100_000;
+
+    /** Payloads above this are shrunk by dropping the heaviest optional sections. */
+    private const MAX_PAYLOAD_BYTES = 800_000;
+
     private function dispatch(string $type, string $message, ?string $stack, string $level, array $extra): bool
     {
         if (!$this->config->enabled) {
@@ -176,6 +196,13 @@ class Client
             return false;
         }
 
+        // Bound the two free-text fields so a pathological message/trace can't
+        // balloon the event (or OOM the reporting path itself).
+        $message = mb_substr($message, 0, self::MAX_MESSAGE_CHARS);
+        if ($stack !== null && \strlen($stack) > self::MAX_STACK_CHARS) {
+            $stack = substr($stack, 0, self::MAX_STACK_CHARS) . "\n    ... (truncated)";
+        }
+
         if ($this->shouldIgnoreMessage($type . ': ' . $message) || $this->shouldIgnoreMessage($message)) {
             return false;
         }
@@ -184,10 +211,21 @@ class Client
         $topFrame = $stack !== null ? (explode("\n", $stack)[1] ?? '') : '';
         $dedupeKey = $type . '|' . $message . '|' . $topFrame;
         $now = microtime(true);
-        if (isset($this->lastSeen[$dedupeKey]) && ($now - $this->lastSeen[$dedupeKey]) < $this->config->dedupeSeconds) {
-            return false;
+        if ($this->config->dedupeSeconds > 0) {
+            if (isset($this->lastSeen[$dedupeKey]) && ($now - $this->lastSeen[$dedupeKey]) < $this->config->dedupeSeconds) {
+                return false;
+            }
+            // Prune expired entries so the map stays bounded in long-running
+            // processes (queue workers, Octane) instead of growing per unique
+            // error message forever.
+            if (\count($this->lastSeen) >= 200) {
+                $this->lastSeen = array_filter(
+                    $this->lastSeen,
+                    fn (float $seen): bool => ($now - $seen) < $this->config->dedupeSeconds,
+                );
+            }
+            $this->lastSeen[$dedupeKey] = $now;
         }
-        $this->lastSeen[$dedupeKey] = $now;
 
         $mergedExtra = array_merge($this->scope->getExtras(), $extra);
         $tags = $this->scope->getTags();
@@ -204,13 +242,13 @@ class Client
             'framework' => $this->config->framework,
             'release' => $this->config->release,
             'environment' => $this->config->environment,
-            'timestamp' => gmdate('Y-m-d\TH:i:s.v\Z'),
+            'timestamp' => Breadcrumb::now(),
             'user' => $this->scope->getUser(),
-            'extra' => $mergedExtra !== [] ? $mergedExtra : null,
+            'extra' => $mergedExtra !== [] ? $this->redact($mergedExtra) : null,
             'tags' => $tags !== [] ? $tags : null,
-            'contexts' => $contexts !== [] ? $contexts : null,
+            'contexts' => $contexts !== [] ? $this->redact($contexts) : null,
             'breadcrumbs' => $this->breadcrumbs !== []
-                ? array_map(static fn (Breadcrumb $b): array => $b->toArray(), $this->breadcrumbs)
+                ? array_map(fn (Breadcrumb $b): array => $this->redact($b->toArray()), $this->breadcrumbs)
                 : null,
             'sdk' => ['name' => $this->config->sdkName, 'version' => BugHQ::VERSION],
             'session' => $this->session,
@@ -225,6 +263,19 @@ class Client
             }
             if (\is_array($result)) {
                 $payload = $result;
+            }
+        }
+
+        // Bound the total payload: drop the heaviest optional sections rather
+        // than POST megabytes (app data in log context/extras can be huge).
+        $encoded = json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+        if ($encoded !== false && \strlen($encoded) > self::MAX_PAYLOAD_BYTES) {
+            foreach (['breadcrumbs', 'contexts', 'extra'] as $heavy) {
+                unset($payload[$heavy]);
+                $encoded = json_encode($payload, JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+                if ($encoded === false || \strlen($encoded) <= self::MAX_PAYLOAD_BYTES) {
+                    break;
+                }
             }
         }
 
@@ -305,7 +356,62 @@ class Client
         }
         $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
 
-        return $scheme . '://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
+        return $this->scrubUrl($scheme . '://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI']);
+    }
+
+    /** Redact sensitive query-string values (tokens, keys, ...) from a URL. */
+    private function scrubUrl(string $url): string
+    {
+        $qPos = strpos($url, '?');
+        if ($qPos === false) {
+            return $url;
+        }
+
+        parse_str(substr($url, $qPos + 1), $params);
+        $changed = false;
+        foreach ($params as $name => $value) {
+            if ($this->isSensitiveKey((string) $name)) {
+                $params[$name] = '[redacted]';
+                $changed = true;
+            }
+        }
+
+        return $changed ? substr($url, 0, $qPos) . '?' . http_build_query($params) : $url;
+    }
+
+    /**
+     * Replace values of sensitive keys (passwords, tokens, secrets, ...) in
+     * user-supplied structures - recursively, with a depth cap so cyclic or
+     * pathological data can't blow the stack.
+     *
+     * @param array<array-key, mixed> $data
+     * @return array<array-key, mixed>
+     */
+    private function redact(array $data, int $depth = 0): array
+    {
+        if ($depth >= 8) {
+            return $data;
+        }
+
+        foreach ($data as $key => $value) {
+            if (\is_string($key) && $this->isSensitiveKey($key)) {
+                $data[$key] = '[redacted]';
+                continue;
+            }
+            if (\is_array($value)) {
+                $data[$key] = $this->redact($value, $depth + 1);
+            }
+        }
+
+        return $data;
+    }
+
+    private function isSensitiveKey(string $key): bool
+    {
+        return array_any(
+            $this->config->redactKeys,
+            static fn (string $needle): bool => str_contains(strtolower($key), $needle),
+        );
     }
 
     private function osName(): string
@@ -318,13 +424,10 @@ class Client
 
     private function shouldIgnoreException(\Throwable $e): bool
     {
-        foreach ($this->config->ignoreExceptions as $class) {
-            if ($e instanceof $class) {
-                return true;
-            }
-        }
-
-        return false;
+        return array_any(
+            $this->config->ignoreExceptions,
+            static fn (string $class): bool => $e instanceof $class,
+        );
     }
 
     private function shouldIgnoreMessage(string $haystack): bool

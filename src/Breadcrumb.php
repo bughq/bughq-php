@@ -39,13 +39,19 @@ final class Breadcrumb
         );
     }
 
+    /** UTC ISO-8601 with real milliseconds (gmdate's `v` always renders 000). */
+    public static function now(): string
+    {
+        return (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d\TH:i:s.v\Z');
+    }
+
     /**
      * @return array<string, mixed>
      */
     public function toArray(): array
     {
         $out = [
-            'timestamp' => $this->timestamp ?? gmdate('Y-m-d\TH:i:s.v\Z'),
+            'timestamp' => $this->timestamp ?? self::now(),
             'type' => $this->type,
             'level' => $this->level,
         ];

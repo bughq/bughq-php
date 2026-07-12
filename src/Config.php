@@ -92,6 +92,28 @@ final class Config
     public array $initialTags = [];
 
     /**
+     * Key substrings whose values are redacted from extra/contexts/breadcrumb
+     * data and URL query strings before send (case-insensitive).
+     *
+     * @var list<string>
+     */
+    public array $redactKeys = [
+        'password',
+        'passwd',
+        'secret',
+        'token',
+        'api_key',
+        'apikey',
+        'authorization',
+        'auth',
+        'cookie',
+        'credential',
+        'private_key',
+        'access_key',
+        'session_id',
+    ];
+
+    /**
      * @param array<string, mixed> $options
      */
     public function __construct(array $options = [])
@@ -127,7 +149,7 @@ final class Config
             $this->sampleRate = max(0.0, min(1.0, (float) $options['sampleRate']));
         }
 
-        foreach (['ignoreExceptions', 'ignoreMessages', 'initialTags'] as $prop) {
+        foreach (['ignoreExceptions', 'ignoreMessages', 'initialTags', 'redactKeys'] as $prop) {
             if (isset($options[$prop]) && \is_array($options[$prop])) {
                 $this->{$prop} = $options[$prop];
             }

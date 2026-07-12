@@ -43,7 +43,12 @@ final class StackTrace
 
     public static function title(\Throwable $e): string
     {
-        return self::type($e) . ': ' . $e->getMessage();
+        // Newlines are collapsed so a crafted exception message cannot forge
+        // "    at ..." frame lines and poison the ingest's fingerprint/culprit
+        // (both derive from the top stack frame).
+        $message = str_replace(["\r\n", "\r", "\n"], ' ', $e->getMessage());
+
+        return self::type($e) . ': ' . $message;
     }
 
     /** The exception class name without a leading backslash. */
