@@ -9,6 +9,8 @@ instead - it wires everything below into the framework automatically.
 
 ## Install
 
+Requires PHP 8.4+.
+
 ```bash
 composer require bughq/bughq
 ```
