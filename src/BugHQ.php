@@ -19,7 +19,7 @@ use BugHQ\Transport\Transport;
  */
 final class BugHQ
 {
-    public const VERSION = '0.1.0';
+    public const VERSION = '0.1.1';
 
     private static ?Client $client = null;
 
