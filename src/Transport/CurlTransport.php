@@ -39,10 +39,9 @@ final class CurlTransport implements Transport
             ]);
 
             $ok = curl_exec($ch);
-            $status = $ok === false ? null : (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-            curl_close($ch);
-
-            return $status;
+            // curl_close() is a no-op since PHP 8.0 and deprecated in 8.5 -
+            // the handle is freed when it goes out of scope.
+            return $ok === false ? null : (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         } catch (\Throwable) {
             // never let reporting throw
             return null;
