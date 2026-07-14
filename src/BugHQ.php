@@ -66,6 +66,17 @@ final class BugHQ
     }
 
     /**
+     * One-call reporting: a Throwable captures an exception, a string
+     * captures an error-level message. `BugHQ::report($e)`.
+     *
+     * @param array<string, mixed> $extra
+     */
+    public static function report(\Throwable|string $error, array $extra = []): bool
+    {
+        return self::$client?->report($error, $extra) ?? false;
+    }
+
+    /**
      * @param array<string, mixed>|Breadcrumb $crumb
      */
     public static function addBreadcrumb(array|Breadcrumb $crumb): void

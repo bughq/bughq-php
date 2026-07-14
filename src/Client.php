@@ -85,6 +85,23 @@ class Client
         );
     }
 
+    /**
+     * Ergonomic one-call reporting: a Throwable captures an exception, a
+     * string captures an error-level message. Mirrors `report()` in the
+     * JavaScript SDK. (Inside Laravel, the framework's own `report()` helper
+     * also routes here via the bughq-laravel exception hook.)
+     *
+     * @param array<string, mixed> $extra
+     */
+    public function report(\Throwable|string $error, array $extra = []): bool
+    {
+        if ($error instanceof \Throwable) {
+            return $this->captureException($error, $extra);
+        }
+
+        return $this->captureMessage($error, 'error', $extra);
+    }
+
     // --- Breadcrumbs ----------------------------------------------------------
 
     /**

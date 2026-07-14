@@ -61,6 +61,28 @@ final class ClientTest extends TestCase
         self::assertArrayNotHasKey('stack', $payload);
     }
 
+    public function testReportThrowableCapturesAnException(): void
+    {
+        $ok = $this->client()->report(new \TypeError('kaboom'), ['orderId' => 42]);
+
+        self::assertTrue($ok);
+        $payload = $this->transport->last();
+        self::assertSame('TypeError', $payload['type']);
+        self::assertSame('kaboom', $payload['message']);
+        self::assertSame('error', $payload['level']);
+        self::assertSame(42, $payload['extra']['orderId']);
+    }
+
+    public function testReportStringCapturesAnErrorLevelMessage(): void
+    {
+        $this->client()->report('checkout failed');
+
+        $payload = $this->transport->last();
+        self::assertSame('Message', $payload['type']);
+        self::assertSame('checkout failed', $payload['message']);
+        self::assertSame('error', $payload['level']);
+    }
+
     public function testScopeRidesAlong(): void
     {
         $client = $this->client(['initialTags' => ['region' => 'us']]);
