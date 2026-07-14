@@ -50,6 +50,20 @@ final class BugHQ
     }
 
     /**
+     * Adopt an externally constructed client (no handler registration, no new
+     * instance). Integrations that manage the client themselves - e.g. the
+     * Laravel package's container singleton - call this so the plain static
+     * API (`BugHQ::report()` etc.) shares that same client instead of
+     * silently no-oping.
+     */
+    public static function useClient(Client $client): Client
+    {
+        self::$client = $client;
+
+        return $client;
+    }
+
+    /**
      * @param array<string, mixed> $extra
      */
     public static function captureException(\Throwable $e, array $extra = []): bool
