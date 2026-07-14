@@ -7,10 +7,11 @@ namespace BugHQ;
 /**
  * Resolved client configuration.
  *
- * Accepts either explicit `project` + `key` (+ optional `host`) or a `dsn` of
- * the form `https://<ingest_key>@<host>/<project_id>`. The ingest key is
- * public - it ships in client code and is a revocable identifier, not a
- * secret.
+ * Only the `key` is required — it's globally unique, so the ingest resolves the
+ * project from it alone (simpler than a Sentry DSN, which carries the project id
+ * in its path). You may still pass an explicit `project` (+ optional `host`), or
+ * a `dsn` of the form `https://<ingest_key>@<host>/<project_id>`. The ingest key
+ * is public - it ships in client code and is a revocable identifier, not a secret.
  */
 final class Config
 {
@@ -164,7 +165,10 @@ final class Config
 
         $this->host = rtrim($this->host, '/');
 
-        if ($this->project === '' || $this->key === '') {
+        // The key is all that's required: it's globally unique, so the ingest
+        // resolves the project from it alone. `project` is optional (an explicit
+        // override or a DSN can still supply it, but a bare key works).
+        if ($this->key === '') {
             $this->enabled = false;
         }
     }

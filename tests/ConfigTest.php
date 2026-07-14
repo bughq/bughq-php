@@ -49,9 +49,16 @@ final class ConfigTest extends TestCase
         self::assertSame('http://localhost:3108', $config->host);
     }
 
-    public function testMissingProjectOrKeyDisables(): void
+    public function testKeyAloneEnables(): void
     {
-        self::assertFalse((new Config(['key' => 'k']))->enabled);
+        // The key is globally unique, so it alone identifies the project — a
+        // bare key enables capture (no project id required).
+        self::assertTrue((new Config(['key' => 'k']))->enabled);
+    }
+
+    public function testMissingKeyDisables(): void
+    {
+        // No key means the ingest can't resolve a project, so capture is off.
         self::assertFalse((new Config(['project' => 'p']))->enabled);
         self::assertFalse((new Config([]))->enabled);
     }

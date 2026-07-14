@@ -249,7 +249,9 @@ class Client
         $contexts = $this->buildContexts();
 
         $payload = [
-            'project' => $this->config->project,
+            // Omitted when empty: the ingest key alone identifies the project
+            // server-side (keys are globally unique), so a key-only config works.
+            'project' => $this->config->project !== '' ? $this->config->project : null,
             'type' => $type,
             'message' => $message,
             'stack' => $stack,
