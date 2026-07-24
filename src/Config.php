@@ -15,8 +15,9 @@ namespace BugHQ;
  */
 final class Config
 {
-    // TEMPORARY: local-dev phase — switch back to 'https://bughq.org' at launch.
-    public const DEFAULT_HOST = 'http://localhost:3108';
+    // Fixed production ingest endpoint — events POST to DEFAULT_HOST.'/errors'.
+    // Self-hosters override via the BUGHQ_HOST env / a DSN.
+    public const DEFAULT_HOST = 'https://bughq.org';
 
     public string $project = '';
 
